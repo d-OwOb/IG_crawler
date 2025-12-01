@@ -1,0 +1,397 @@
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+import time
+import os
+import pandas as pd
+import emoji
+from yt_dlp import YoutubeDL
+from datetime import datetime
+
+#########################參數設定############################################################################################################
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+COOKIE = os.path.join(CURRENT_PATH,"www.instagram.com_cookies.txt") 
+LOOP_LIMIT = 10 #找留言的迴圈次數上限
+COMMENT_LIMIT = 50 #擷取留言總數的資料上限
+VIDEO_LIMIT = 50 #單次下載的影片數量上限
+EMPTY_LIMIT =3 #留言迴圈沒有抓到新留言的容許值
+#############################################################################################################################################
+###########################################################開新分頁的含式#####################################################################
+#############################################################################################################################################
+def  get_detail_data(driver,actions,href):
+    driver.execute_script("window.open('about:blank', '_blank');")
+    driver.switch_to.window(driver.window_handles[-1])
+    driver.get(href)
+    time.sleep(3)
+    COMMENT_QS = "//div[contains(@class,'xdt5ytf') and contains(@class,'x1uhb9sk') and contains(@class,'x1cy8zhl') and not(.//a)] //span"
+    DATE_QS = '//a[contains(@href,"/reel/")]//time'
+    raw_date = driver.find_element(By.XPATH,DATE_QS).get_attribute("title")
+    if "年" in raw_date and "月" in raw_date and "日" in raw_date:
+        try:
+            dt = datetime.strptime(raw_date, "%Y年%m月%d日")
+            date = dt.strftime("%Y/%m/%d")
+        except : 
+            date = raw_date
+    comments=[]
+    loop_count = 1
+    empty_count = 0
+    while len(comments) <= COMMENT_LIMIT and loop_count<=LOOP_LIMIT:
+        comments_ele= driver.find_elements(By.XPATH,COMMENT_QS)
+        if comments_ele :
+            print(f"[留言]======第{loop_count}次搜尋==========")
+            old_len = len(comments)
+            for ele in comments_ele:
+                comment = ele.text
+                comment = emoji.replace_emoji(comment,replace='')#去除EMOJI
+                if comment not in comments and comment.strip() != "":#檢查是否重複與空字串
+                    comments.append(comment)
+                    print(f"[留言]找到留言 : {comment}")
+            actions.move_to_element(comments_ele[len(comments_ele)-1]).click().send_keys(Keys.END).perform()
+            loop_count+=1
+            if old_len == len(comments):
+                empty_count+=1
+                if empty_count >= EMPTY_LIMIT : 
+                    print(f"[留言]超過容許值 {EMPTY_LIMIT} 次未抓到新留言，跳過")
+                    break
+            else:
+                empty_count = 0
+            time.sleep(1)
+        else: 
+            print("[留言]無留言，即將關閉頁面")
+            break
+    time.sleep(1)
+    driver.close()
+    driver.switch_to.window(driver.window_handles[0])
+    detail_data = {
+        "date":date,
+        "comments":comments
+    }
+    return detail_data
+#############################################################################################################################################
+#############################################################################################################################################
+#############################################################################################################################################
+
+#############################################################################################################################################
+################################################把擷取到的資料"萬"改純數字(但只能估計############################################################
+#############################################################################################################################################
+def TransChToNum(string):
+    if string == "":
+        raise Exception("讚數、留言數擷取錯誤，請稍後再試或調整下滑次數")
+    elif "萬" in string:
+        return float(string.replace("萬",""))*10000 
+    else:
+        return float(string)
+#########################################################EEEEEEEENNNNNNNDDDDDD################################################################
+
+
+#############################################################################################################################################
+#############################################################匯出COOKIE#######################################################################
+#############################################################################################################################################
+def export_cookies(driver, cookie_path):
+    """
+    將 Selenium cookies 匯出成 Netscape 格式
+    可直接給 yt-dlp 使用
+    """
+    cookies = driver.get_cookies()
+
+    with open(cookie_path, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write("# This file was generated by Selenium automation\n\n")
+
+        for c in cookies:
+            domain = c.get("domain", "")
+            flag = "TRUE" if domain.startswith(".") else "FALSE"
+            path = c.get("path", "/")
+            secure = "TRUE" if c.get("secure") else "FALSE"
+            expiry = c.get("expiry", 0)
+            name = c.get("name", "")
+            value = c.get("value", "")
+
+            f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n")
+
+    print(f"[系統]Cookie 已匯出到：{cookie_path}")
+
+#########################################################EEEEEEEENNNNNNNDDDDDD################################################################
+
+#############################################################################################################################################
+##############################################################下滑#########################################################################
+#############################################################################################################################################
+
+def Scroll_down(driver,key = Keys.ARROW_DOWN,times=1):
+    for i in range(times) :
+        driver.find_element(By.TAG_NAME, "body").send_keys(key)
+    time.sleep(3)
+
+#########################################################EEEEEEEENNNNNNNDDDDDD################################################################
+
+#############################################################################################################################################
+##############################################################儲存檔案########################################################################
+#############################################################################################################################################
+
+def save_data(path,new_data,old_data):
+    fileWriting = True
+    while fileWriting : 
+        try:
+            df_new_data = pd.DataFrame(new_data)
+            output_data = pd.concat([old_data,df_new_data.copy()],ignore_index=True)
+            output_data.to_csv(path, index=False, encoding="utf-8-sig")
+            fileWriting = False
+            return output_data
+        except Exception as e:
+            print(f"錯誤 : {e}")
+            user_interupt = input("[錯誤]檔案無法寫入，可能正在開啟，請確認後重試 或輸入 x 來取消")
+            if user_interupt.lower() == "x":
+                print("[錯誤]檔案無法寫入，使用者取消")
+                fileWriting = False
+                return False
+            
+#########################################################EEEEEEEENNNNNNNDDDDDD################################################################
+
+#############################################################################################################################################
+##############################################################就是畫線#########################################################################
+#############################################################################################################################################
+
+def print_line(times=1):
+    for i in range(times):
+        print("========================================================================")
+
+#########################################################EEEEEEEENNNNNNNDDDDDD################################################################
+
+
+#############################################################################################################################################
+##############################################################主程式#########################################################################
+#############################################################################################################################################
+
+#處理舊CSV
+download_dir = rf"{CURRENT_PATH}/downloads/"
+summary_path = os.path.join(download_dir,f"videos_summary.csv")
+if os.path.exists(summary_path):
+    old_videos_data = pd.read_csv(summary_path, encoding="utf-8-sig")
+    old_urls = set(old_videos_data['Original_URL'].astype(str))  # 把舊網址存成 set，加速查找
+else:
+    old_videos_data = pd.DataFrame()
+    old_urls = set()
+    
+comments_path = os.path.join(download_dir,f"comments_data.csv")
+if os.path.exists(comments_path):
+    old_comments_data = pd.read_csv(comments_path, encoding="utf-8-sig")
+else:
+    old_comments_data = pd.DataFrame()
+
+#啟動瀏覽器
+USER_PATH = os.path.expanduser("~")  # 自動抓 C:\Users\xxxxx
+PROFILE_PATH = os.path.join(USER_PATH, "AppData", "Local", "Google", "Chrome", "SeleniumProfile")
+
+
+options = webdriver.ChromeOptions()
+options.add_argument(rf"--user-data-dir={PROFILE_PATH}")
+# options.add_argument(r"--user-data-dir=C:/Users/User\AppData/Local/Google/Chrome/SeleniumProfile")
+options.add_argument("--window-position=-4000,0")
+options.add_argument("--window-size=1400,1100") 
+options.add_argument(r'--profile-directory=Default')
+options.add_argument("--log-level=3")
+options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
+options.add_experimental_option('useAutomationExtension', False)
+options.add_argument("--disable-features=OptimizationGuideModelDownloading")
+options.add_argument("--disable-features=MediaLearningExperiment")
+options.add_argument("--disable-features=OptimizationHints")
+options.add_argument("--disable-features=OptimizationTargetPrediction")
+#
+options.add_argument("--disable-background-networking")
+options.add_argument("--disable-component-update")
+options.add_argument("--disable-client-side-phishing-detection")
+options.add_argument("--disable-features=TranslateUI")
+options.add_argument("--disable-ipc-flooding-protection")
+options.add_argument("--disable-popup-blocking")
+#
+driver = webdriver.Chrome(options=options)
+driver.get("https://www.instagram.com/")
+time.sleep(3)
+# input("test pause input enter to continue")
+try:
+    elements = driver.find_element(By.NAME, "username")
+except:
+    elements = None
+if elements:
+    ACCOUNT = input("\n[登入]請輸入你的IG帳號 : ").strip()
+    PASSWORD = input("[登入]請輸入你的IG密碼 : ").strip()
+    driver.find_element(By.NAME, "username").send_keys(ACCOUNT)
+    driver.find_element(By.NAME, "password").send_keys(PASSWORD)
+    driver.find_element(By.NAME, "password").send_keys(Keys.ENTER)
+    time.sleep(5)
+else:
+    print("[系統]使用者已登入")
+
+
+if os.path.exists(COOKIE):
+    print ("[系統]COOKIE 已存在")
+else : 
+    print("[系統]COOKIE檔案不存在，將匯出COOKIE")
+    export_cookies(driver,COOKIE)
+    print("[系統]COOKIE匯出完成")
+
+# 輸入要抓的使用者帳號
+username = input("\n[目標]請輸入要抓取之 Instagram 使用者帳號：").strip()
+username_dir = rf"{download_dir}{username}"
+os.makedirs(username_dir,exist_ok=True)
+
+#進入指定使用者頁面
+profile_url = f"https://www.instagram.com/{username}/reels"
+print(f"\n[系統]前往使用者頁面 : {profile_url}")
+driver.get(profile_url)
+time.sleep(5)
+Scroll_down(driver,times=5)
+#自動滾動頁面，收集影片 URL
+href_list = []
+processed_href = []
+new_videos_data = []
+new_comments_data = []
+scroll_pause = 4
+last_hrefs = None
+same_count = 0
+while len(processed_href) < VIDEO_LIMIT:
+    href_to_process=[]
+    links = driver.find_elements(By.XPATH, "//a[contains(@href, '/reel/')]")
+    ###
+    print("\n[系統]開始本輪網址擷取.....")
+    for link in links:
+        href_to_process.append(link.get_attribute("href"))
+    print("\n[系統]本輪網址擷取完成~~")
+
+
+    ### 重複跳脫
+    if last_hrefs is not None and set(last_hrefs) == set(href_to_process):
+        same_count +=1
+        print(f"\n[系統]未抓取到新連結，次數+1，目前{same_count}")
+        Scroll_down(driver,Keys.PAGE_DOWN,1)
+        if same_count >= 3:
+            print("\n[系統]重複3次抓到相同連結，跳出迴圈")
+            time.sleep(1)
+            break
+        continue
+    else:
+        print("\n[系統]找到新網址集")
+        same_count = 0
+    last_hrefs = href_to_process.copy()
+    # for link in links:
+    for current_href in href_to_process:
+        # print("進入current not in href to process 迴圈")
+        
+        # href = link.get_attribute("href")
+        if current_href not in href_list and current_href not in old_urls :
+            # print(f"找到網址 {current_href}")
+            uniqueID = current_href.split("/reel/")[1].rstrip("/")#幫影片名字編號
+            link = driver.find_element(By.XPATH,f"//a[contains(@href,'{uniqueID}')]")
+            play_count = link.find_element(By.XPATH, ".//div[contains(@class,'aajy')]//span//span").text
+            actions = ActionChains(driver)
+            actions.move_to_element(link).perform()
+            time.sleep(0.5)
+            data = link.find_elements(By.XPATH, ".//li//span//span")
+            if(not data or len(data) < 2):
+                print(f"\n[錯誤]找到網址{current_href}，但無法擷取詳細資料")
+                href_list.append(current_href)
+                continue
+            likes = data[0].text
+            comment_count = data[1].text
+            href_list.append(current_href)
+            processed_href.append(current_href)
+            play_count = TransChToNum(play_count)
+            likes = TransChToNum(likes)
+            print("\n\n\n")
+            print_line(3)
+            print(f"[影片]找到影片 : {current_href}\n愛心數 : {likes}\n留言數 : {comment_count}\n\n--------正在開始下載第 {len(processed_href)} 部影片--------")
+            Video_Id = f"{username}_{uniqueID}"
+            # ---- 儲存影片資料 ----
+            video_path = os.path.join(username_dir, f"{Video_Id}.mp4")
+            print("[下載]下載影片中...")
+            YDL_OPT = {
+                "outtmpl": video_path,
+                "quiet":True,
+                "cookiefile":COOKIE,
+                "format": "best",
+            }
+            with YoutubeDL(YDL_OPT) as ydl:
+                info = ydl.extract_info(current_href,download=True)
+                duration = info.get("duration")
+            filesize = os.path.getsize(video_path)
+            print("[下載]下載完成，開啟分頁擷取更多資訊")
+            #開新分頁擷取留言
+            detail_data = get_detail_data(driver,actions,current_href)
+            #影片網址取編號
+            
+            new_videos_data.append({
+                "Video_Id":Video_Id,
+                "Published_At": detail_data["date"],
+                "Video_Size":str(round(filesize/1024/1024,2))+" MB",
+                "Video_Duration":round(duration,1),
+                "Views": int(play_count) ,
+                "Likes": likes,
+                "Like/Views":likes/play_count,
+                # "上傳帳號":username,
+                "Original_URL": current_href,
+                # "總留言數": comment_count,
+                # "留言擷取": detail_data["comments"]
+            })
+            for comment in detail_data["comments"]:
+                new_comments_data.append({
+                    "Video_Id":Video_Id,
+                    "Comment":comment
+                })
+            print(f"[影片]影片: {uniqueID} 處理完畢")
+            if len(processed_href) >= VIDEO_LIMIT:
+                print(f"\n[影片]目前影片抓取數{len(processed_href)}支，已達到單次設定上限({VIDEO_LIMIT}次)，跳脫迴圈")
+                break  #如果到上限就Break
+            if len(processed_href) %5 == 0 :
+                print("\n\n===達到自動存檔點(每5支一次)===")
+                print("[自動儲存]正在儲存videos_summary...")
+                # 只呼叫一次，並接住回傳的 updated old_data
+                updated = save_data(summary_path, new_videos_data, old_videos_data)
+
+                if updated is not False:          # 儲存成功
+                    old_videos_data = updated     # 更新 old_data
+                    new_videos_data.clear()       # 清空暫存
+                    print("[自動儲存]儲存成功")
+                else:
+                    raise Exception("儲存失敗")
+
+
+                print("[自動儲存]正在儲存comments_data...")
+                updated = save_data(comments_path, new_comments_data, old_comments_data)
+
+                if updated is not False:          # 儲存成功
+                    old_comments_data = updated     # 更新 old_data
+                    new_comments_data.clear()       # 清空暫存
+                    print("[自動儲存]儲存成功")
+                else:
+                    raise Exception("儲存失敗")
+            Scroll_down(driver,Keys.ARROW_DOWN,3)
+    print("\n[系統]本輪處理完畢，下滑後開啟新一輪檢索")
+    Scroll_down(driver,Keys.ARROW_DOWN,10)
+    
+print(f"[系統]總共下載 {len(processed_href)} 個影片")
+
+# ---------- 匯出 CSV ----------
+print("[儲存]正在儲存videos_summary...")
+updated = save_data(summary_path, new_videos_data, old_videos_data)
+
+if updated is not False:          # 儲存成功
+    old_videos_data = updated     # 更新 old_data
+    new_videos_data.clear()       # 清空暫存
+    print("[儲存]儲存成功")
+else:        
+    raise Exception("儲存失敗")
+
+print("[儲存]正在儲存comments_data...")
+updated = save_data(comments_path, new_comments_data, old_comments_data)
+
+if updated is not False:          # 儲存成功
+    old_comments_data = updated     # 更新 old_data
+    new_comments_data.clear()       # 清空暫存
+    print("[儲存]儲存成功")
+else:        
+    raise Exception("儲存失敗")
+driver.quit()
