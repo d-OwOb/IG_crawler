@@ -12,13 +12,6 @@ import emoji
 from yt_dlp import YoutubeDL
 from datetime import datetime
 
-#########################參數設定############################################################################################################
-CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-COOKIE = os.path.join(CURRENT_PATH,"www.instagram.com_cookies.txt") 
-LOOP_LIMIT = 10 #找留言的迴圈次數上限
-COMMENT_LIMIT = 50 #擷取留言總數的資料上限
-VIDEO_LIMIT = 50 #單次下載的影片數量上限
-EMPTY_LIMIT =3 #留言迴圈沒有抓到新留言的容許值
 #############################################################################################################################################
 ###########################################################開新分頁的含式#####################################################################
 #############################################################################################################################################
@@ -49,7 +42,7 @@ def  get_detail_data(driver,actions,href):
                 comment = emoji.replace_emoji(comment,replace='')#去除EMOJI
                 if comment not in comments and comment.strip() != "":#檢查是否重複與空字串
                     comments.append(comment)
-                    print(f"[留言]找到留言 : {comment}")
+                    # print(f"[留言]找到留言 : {comment}")
             actions.move_to_element(comments_ele[len(comments_ele)-1]).click().send_keys(Keys.END).perform()
             loop_count+=1
             if old_len == len(comments):
@@ -80,7 +73,7 @@ def  get_detail_data(driver,actions,href):
 #############################################################################################################################################
 def TransChToNum(string):
     if string == "":
-        raise Exception("讚數、留言數擷取錯誤，請稍後再試或調整下滑次數")
+        raise Exception("[錯誤] 讚數、留言數擷取錯誤，請稍後再試或調整下滑次數")
     elif "萬" in string:
         return float(string.replace("萬",""))*10000 
     else:
@@ -121,10 +114,10 @@ def export_cookies(driver, cookie_path):
 ##############################################################下滑#########################################################################
 #############################################################################################################################################
 
-def Scroll_down(driver,key = Keys.ARROW_DOWN,times=1):
+def Scroll_down(driver,key = Keys.ARROW_DOWN,times=1,sleep_time = 3):
     for i in range(times) :
         driver.find_element(By.TAG_NAME, "body").send_keys(key)
-    time.sleep(3)
+    time.sleep(sleep_time)
 
 #########################################################EEEEEEEENNNNNNNDDDDDD################################################################
 
@@ -166,6 +159,12 @@ def print_line(times=1):
 ##############################################################主程式#########################################################################
 #############################################################################################################################################
 
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
+COOKIE = os.path.join(CURRENT_PATH,"www.instagram.com_cookies.txt") 
+LOOP_LIMIT = 10 #找留言的迴圈次數上限
+COMMENT_LIMIT = 50 #擷取留言總數的資料上限
+EMPTY_LIMIT =3 #留言迴圈沒有抓到新留言的容許值
+
 #處理舊CSV
 download_dir = rf"{CURRENT_PATH}/downloads/"
 summary_path = os.path.join(download_dir,f"videos_summary.csv")
@@ -182,6 +181,15 @@ if os.path.exists(comments_path):
 else:
     old_comments_data = pd.DataFrame()
 
+TARGET_URLS= set([
+
+])
+TARGET_URLS = [
+    u for u in TARGET_URLS
+    if u not in old_urls
+]
+VIDEO_LIMIT = min(len(TARGET_URLS),50) #單次下載的影片數量上限
+
 #啟動瀏覽器
 USER_PATH = os.path.expanduser("~")  # 自動抓 C:\Users\xxxxx
 PROFILE_PATH = os.path.join(USER_PATH, "AppData", "Local", "Google", "Chrome", "SeleniumProfile")
@@ -190,8 +198,8 @@ PROFILE_PATH = os.path.join(USER_PATH, "AppData", "Local", "Google", "Chrome", "
 options = webdriver.ChromeOptions()
 options.add_argument(rf"--user-data-dir={PROFILE_PATH}")
 # options.add_argument(r"--user-data-dir=C:/Users/User\AppData/Local/Google/Chrome/SeleniumProfile")
-options.add_argument("--window-position=-4000,0")
-options.add_argument("--window-size=1400,1100") 
+# options.add_argument("--window-position=-4000,0")
+options.add_argument("--window-size=800,1200") 
 options.add_argument(r'--profile-directory=Default')
 options.add_argument("--log-level=3")
 options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
@@ -243,6 +251,11 @@ os.makedirs(username_dir,exist_ok=True)
 profile_url = f"https://www.instagram.com/{username}/reels"
 print(f"\n[系統]前往使用者頁面 : {profile_url}")
 driver.get(profile_url)
+# if TARGET_URLS :
+#     print("[系統] ===檢測到目標網址集，啟動指定模式===")
+# else:
+#     print("[系統] ===未偵測目標網址集，啟動全局下載模式===")
+print(rf"[系統] 本次下載影片上限為 {VIDEO_LIMIT} 部")
 time.sleep(5)
 Scroll_down(driver,times=5)
 #自動滾動頁面，收集影片 URL
@@ -253,6 +266,8 @@ new_comments_data = []
 scroll_pause = 4
 last_hrefs = None
 same_count = 0
+
+
 while len(processed_href) < VIDEO_LIMIT:
     href_to_process=[]
     links = driver.find_elements(By.XPATH, "//a[contains(@href, '/reel/')]")
@@ -260,6 +275,7 @@ while len(processed_href) < VIDEO_LIMIT:
     print("\n[系統]開始本輪網址擷取.....")
     for link in links:
         href_to_process.append(link.get_attribute("href"))
+        # print("[系統] 本輪找到網址 : "+link.get_attribute("href"))
     print("\n[系統]本輪網址擷取完成~~")
 
 
@@ -282,28 +298,52 @@ while len(processed_href) < VIDEO_LIMIT:
         # print("進入current not in href to process 迴圈")
         
         # href = link.get_attribute("href")
-        if current_href not in href_list and current_href not in old_urls :
-            # print(f"找到網址 {current_href}")
+        if current_href not in href_list and current_href not in old_urls and (not TARGET_URLS or current_href in TARGET_URLS):
+            print(f"[系統]找到網址 {current_href}")
             uniqueID = current_href.split("/reel/")[1].rstrip("/")#幫影片名字編號
             link = driver.find_element(By.XPATH,f"//a[contains(@href,'{uniqueID}')]")
+
             play_count = link.find_element(By.XPATH, ".//div[contains(@class,'aajy')]//span//span").text
+            try:
+                play_count = TransChToNum(play_count)
+            except:
+                print(rf"[錯誤] 網址{current_href} 觀看數擷取錯誤，重試")
+                try:
+                    Scroll_down(driver,Keys.ARROW_DOWN,5,2)
+                    play_count = link.find_element(By.XPATH, ".//div[contains(@class,'aajy')]//span//span").text
+                    play_count = TransChToNum(play_count)
+                except : 
+                    play_count = 0
+                    
             actions = ActionChains(driver)
             actions.move_to_element(link).perform()
-            time.sleep(0.5)
+            time.sleep(2)
             data = link.find_elements(By.XPATH, ".//li//span//span")
             if(not data or len(data) < 2):
-                print(f"\n[錯誤]找到網址{current_href}，但無法擷取詳細資料")
+                print(f"\n[錯誤]網址{current_href}，無法擷取詳細資料")
                 href_list.append(current_href)
                 continue
             likes = data[0].text
             comment_count = data[1].text
+            try:
+                likes = TransChToNum(likes)
+            except:
+                print(rf"[錯誤] 網址{current_href} 愛心數、留言數擷取錯誤，重試")
+                try:
+                    Scroll_down(driver,Keys.ARROW_DOWN,5,2)
+                    data = link.find_elements(By.XPATH, ".//li//span//span")
+                    likes = data[0].text
+                    comment_count = data[1].text
+                    likes = TransChToNum(likes)
+                except:
+                    likes = 0
+
+
             href_list.append(current_href)
             processed_href.append(current_href)
-            play_count = TransChToNum(play_count)
-            likes = TransChToNum(likes)
             print("\n\n\n")
             print_line(3)
-            print(f"[影片]找到影片 : {current_href}\n愛心數 : {likes}\n留言數 : {comment_count}\n\n--------正在開始下載第 {len(processed_href)} 部影片--------")
+            print(f"[系統] 觀看數 : {play_count}\n愛心數 : {likes}\n留言數 : {comment_count}\n--------正在開始下載第 {len(processed_href)} 部影片--------")
             Video_Id = f"{username}_{uniqueID}"
             # ---- 儲存影片資料 ----
             video_path = os.path.join(username_dir, f"{Video_Id}.mp4")
@@ -329,7 +369,7 @@ while len(processed_href) < VIDEO_LIMIT:
                 "Video_Size":str(round(filesize/1024/1024,2))+" MB",
                 "Video_Duration":round(duration,1),
                 "Views": int(play_count) ,
-                "Likes": likes,
+                "Likes": int(likes),
                 "Like/Views":likes/play_count,
                 # "上傳帳號":username,
                 "Original_URL": current_href,
@@ -343,7 +383,7 @@ while len(processed_href) < VIDEO_LIMIT:
                 })
             print(f"[影片]影片: {uniqueID} 處理完畢")
             if len(processed_href) >= VIDEO_LIMIT:
-                print(f"\n[影片]目前影片抓取數{len(processed_href)}支，已達到單次設定上限({VIDEO_LIMIT}次)，跳脫迴圈")
+                print(f"\n[影片]目前影片抓取數{len(processed_href)}支，已達到單次設定上限({VIDEO_LIMIT}次)，即將結束程式")
                 break  #如果到上限就Break
             if len(processed_href) %5 == 0 :
                 print("\n\n===達到自動存檔點(每5支一次)===")
@@ -368,9 +408,9 @@ while len(processed_href) < VIDEO_LIMIT:
                     print("[自動儲存]儲存成功")
                 else:
                     raise Exception("儲存失敗")
-            Scroll_down(driver,Keys.ARROW_DOWN,3)
+            Scroll_down(driver,Keys.ARROW_DOWN,8,5)
     print("\n[系統]本輪處理完畢，下滑後開啟新一輪檢索")
-    Scroll_down(driver,Keys.ARROW_DOWN,10)
+    Scroll_down(driver,Keys.ARROW_DOWN,15,5)
     
 print(f"[系統]總共下載 {len(processed_href)} 個影片")
 
